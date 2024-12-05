@@ -2,7 +2,7 @@
 
 ## Overview
 
-**LogAnalyzer** is a Python-based tool for processing, analyzing, and reporting web server logs. This script efficiently handles large log files, extracts key insights, and generates structured reports. It is ideal for identifying patterns, analyzing endpoints, tracking IP requests, and detecting suspicious activities in log data.
+**LogAnalyzer** is a Python-based tool for processing, analyzing, and reporting logs. This script efficiently handles large log files, extracts key insights, and generates structured reports. It is ideal for identifying patterns, analyzing endpoints, tracking IP requests, and detecting suspicious activities in log data.
 
 ---
 

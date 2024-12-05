@@ -1,11 +1,13 @@
 import csv
 import mmap
 import re
+import logging
 from collections import Counter
-from typing import Dict, List
+from typing import Dict, List, Generator, Optional
 
 from config import config
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class LogAnalyzer:
     """LogAnalyzer is a tool for processing, analyzing, and reporting log data.
@@ -16,11 +18,7 @@ class LogAnalyzer:
     - Generate structured reports in both console and CSV formats.
     """
 
-    def __init__(
-        self,
-        log_file_path: str,
-        output_file_path: str = "log_analysis_results.csv",
-    ):
+    def __init__(self, log_file_path: str, output_file_path: str = "log_analysis_results.csv"):
         """
         Initialize the LogAnalyzer with paths and configurations.
 
@@ -30,8 +28,6 @@ class LogAnalyzer:
             Path to the log file.
         output_file_path : `str`, optional
             Path to save the analysis results (default: "log_analysis_results.csv").
-        config : `dict`, optional
-            Configuration dictionary for patterns, thresholds, and other settings.
         """
         self.log_file_path = log_file_path
         self.output_file_path = output_file_path
@@ -40,35 +36,43 @@ class LogAnalyzer:
         # Data counters
         self.data_counters = {key: Counter() for key in self.config["data_counters"]}
 
-        # Pattern registry for extensibility
-        self.patterns = {
-            key: re.compile(pattern) for key, pattern in self.config["patterns"].items()
-        }
+        # Patterns
+        self.patterns = {key: re.compile(pattern) for key, pattern in self.config["patterns"].items()}
 
-    def extract_match(
-        self, pattern_name: str, line: bytes, group_index: int = 0
-    ) -> str:
+    def extract_match(self, pattern_key: str, line: bytes, group_index: int = 0) -> Optional[str]:
         """
-        Extract the first match for a registered pattern in the given line.
+        Extract the first match for a given pattern in the provided log line.
 
         Parameters:
         ----------
-        pattern_name : `str`
-            Name of the registered pattern.
+        pattern_key : `str`
+            Key of the pattern to use for extraction.
         line : `bytes`
             A single log entry.
+        group_index : `int`, optional
+            Index of the capturing group to extract (default: 0).
 
         Returns:
         -------
-        `str`:
-            Extracted match or None if not found.
+        `Optional[str]`:
+            Extracted match as a string, or None if no match is found.
+
+        Raises:
+        ------
+        `KeyError`:
+            If the pattern key is not found in the registered patterns.
         """
-        pattern = self.patterns.get(pattern_name)
-        if not pattern:
-            raise ValueError(f"Pattern '{pattern_name}' not registered.")
+        pattern = self.patterns.get(pattern_key)
+        if pattern is None:
+            raise KeyError(f"Pattern '{pattern_key}' not found in the configured patterns.")
 
         match = pattern.search(line)
-        return match.group(group_index).decode("utf-8") if match else None
+        if match:
+            try:
+                return match.group(group_index).decode("utf-8")
+            except IndexError:
+                logging.warning(f"Group index {group_index} out of range for pattern '{pattern_key}'.")
+        return None
 
     def process_log_line(self, line: bytes) -> None:
         """
@@ -79,16 +83,18 @@ class LogAnalyzer:
         line : `bytes`
             A single log entry.
         """
+        # Extract relevant data from the log line
         ip = self.extract_match("ip", line)
         endpoint = self.extract_match("endpoint", line, 1)
         status = self.extract_match("status", line)
 
+        # Update counters based on extracted data
         if ip:
             self.data_counters["ip_requests"][ip] += 1
+            if status and self.is_failed_login(status, line):
+                self.data_counters["failed_logins"][ip] += 1
         if endpoint:
             self.data_counters["endpoint_access"][endpoint] += 1
-        if self.is_failed_login(status, line) and ip:
-            self.data_counters["failed_logins"][ip] += 1
 
     def is_failed_login(self, status: str, line: bytes) -> bool:
         """
@@ -110,13 +116,22 @@ class LogAnalyzer:
         return (status in conditions["status_codes"]) or any(
             keyword in line for keyword in conditions["keywords"]
         )
+    def parse_log_file(self) -> Generator[bytes, None, None]:
+        """
+        Efficiently parse the log file using memory mapping.
 
-    def parse_log_file(self) -> None:
-        """Efficiently parse the log file using memory mapping."""
-        with open(self.log_file_path, "rb") as file:
-            with mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mmapped_file:
-                for line in iter(mmapped_file.readline, b""):
-                    self.process_log_line(line)
+        Yields:
+        -------
+        `Generator[bytes, None, None]`:
+            A generator that yields each line of the log file as bytes.
+        """
+        try:
+            with open(self.log_file_path, "rb") as file:
+                with mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mmapped_file:
+                    for line in iter(mmapped_file.readline, b""):
+                        yield line
+        except (OSError, IOError) as e:
+            logging.error(f"Error while parsing log file: {e}")
 
     def generate_report(self) -> Dict[str, List]:
         """
@@ -176,24 +191,37 @@ class LogAnalyzer:
             Analysis report structured as a dictionary.
         """
         try:
-            with open(
-                self.output_file_path, "w", newline="", encoding="utf-8"
-            ) as csv_file:
+            with open(self.output_file_path, "w", newline="", encoding="utf-8") as csv_file:
                 writer = csv.writer(csv_file)
                 for section, data in report.items():
+                    # Write section title
                     writer.writerow([section.replace("_", " ").title()])
-                    writer.writerow(self.config["csv_structure"][section])
+                    # Write headers based on the section
+                    headers = self.config["csv_structure"].get(section, [])
+                    if headers:
+                        writer.writerow(headers)
+                    # Write data rows
                     writer.writerows(data)
-                    writer.writerow([])  # Add a blank line between sections
+                    # Add a blank line between sections for readability
+                    writer.writerow([])
         except IOError as e:
-            print(f"Error while saving results to CSV: {e}")
+            logging.error(f"Error while saving results to CSV: {e}")
 
     def run(self) -> None:
-        """Perform the log analysis."""
-        self.parse_log_file()
+        """
+        Perform the log analysis by parsing the log file, processing each line,
+        generating a report, displaying the report, and saving it to a CSV file.
+        """
+        # Parse and process log file
+        for line in self.parse_log_file():
+            self.process_log_line(line)
+        
+        # Generate and handle the report
         report = self.generate_report()
         self.display_report(report)
         self.save_to_csv(report)
+        
 
 
-LogAnalyzer("sample.log").run()
+if __name__ == "__main__":
+    LogAnalyzer("sample.log").run()
