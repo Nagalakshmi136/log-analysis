@@ -1,11 +1,21 @@
-import re
 import csv
 import mmap
+import re
 from collections import Counter
-from typing import List, Dict
+from typing import Dict, List
+
 from config import config
 
+
 class LogAnalyzer:
+    """LogAnalyzer is a tool for processing, analyzing, and reporting log data.
+
+    This class provides the ability to:
+    - Parse large log files efficiently using memory mapping.
+    - Extract meaningful information such as request counts, endpoint usage, and suspicious activity.
+    - Generate structured reports in both console and CSV formats.
+    """
+
     def __init__(
         self,
         log_file_path: str,
@@ -25,7 +35,7 @@ class LogAnalyzer:
         """
         self.log_file_path = log_file_path
         self.output_file_path = output_file_path
-        self.config =  config()
+        self.config = config()
 
         # Data counters
         self.data_counters = {key: Counter() for key in self.config["data_counters"]}
@@ -35,8 +45,9 @@ class LogAnalyzer:
             key: re.compile(pattern) for key, pattern in self.config["patterns"].items()
         }
 
-
-    def extract_match(self, pattern_name: str, line: bytes,group_index: int = 0) -> str:
+    def extract_match(
+        self, pattern_name: str, line: bytes, group_index: int = 0
+    ) -> str:
         """
         Extract the first match for a registered pattern in the given line.
 
@@ -69,7 +80,7 @@ class LogAnalyzer:
             A single log entry.
         """
         ip = self.extract_match("ip", line)
-        endpoint = self.extract_match("endpoint", line,1)
+        endpoint = self.extract_match("endpoint", line, 1)
         status = self.extract_match("status", line)
 
         if ip:
@@ -139,20 +150,20 @@ class LogAnalyzer:
                 A dictionary containing sections of the report.
         """
         print("\nRequests per IP Address:")
-        print("-"*25)
+        print("-" * 25)
         print(f"{'IP Address':<20}{'Request Count':<15}")
-        for ip, count in report['requests_per_ip']:
+        for ip, count in report["requests_per_ip"]:
             print(f"{ip:<20}{count:<15}")
-            
+
         print("\nMost Frequently Accessed Endpoint:")
-        print("-"*35)
-        endpoint, count = report['most_accessed_endpoint'][0]
+        print("-" * 35)
+        endpoint, count = report["most_accessed_endpoint"][0]
         print(f"{endpoint} (Accessed {count} times)")
 
         print("\nSuspicious Activity Detected:")
-        print("-"*30)
+        print("-" * 30)
         print(f"{'IP Address':<20}{'Failed Login Attempts':<25}")
-        for ip, count in report['suspicious_activity']:
+        for ip, count in report["suspicious_activity"]:
             print(f"{ip:<20}{count:<25}")
 
     def save_to_csv(self, report: Dict[str, List]) -> None:
@@ -165,7 +176,9 @@ class LogAnalyzer:
             Analysis report structured as a dictionary.
         """
         try:
-            with open(self.output_file_path, "w", newline="") as csv_file:
+            with open(
+                self.output_file_path, "w", newline="", encoding="utf-8"
+            ) as csv_file:
                 writer = csv.writer(csv_file)
                 for section, data in report.items():
                     writer.writerow([section.replace("_", " ").title()])
